@@ -1,0 +1,69 @@
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r data input}
+setwd("/Users/Alesa/Documents/Kaisa/Data_aquisition/stock_data_processed3");
+my_files <- list.files("/Users/Alesa/Documents/Kaisa/Data_aquisition/stock_data_processed3"); # Please download the stock data and load it locally.
+stock_prc <- lapply(my_files, read.csv) # Note: stock_prc[[i]] is a data frame type
+logrets <- lapply(stock_prc, function(x) diff(data.matrix(log(x[6:nrow(x), 2:ncol(x)])), lag=1)) # Note: logrets[[i]] is a matrix type.
+my_files<-gsub(".csv", "", list.files("/Users/Alesa/Documents/Kaisa/Data_aquisition/stock_data_processed3", full.names = FALSE), fixed = TRUE);
+corr_mat <- lapply(logrets, cor, method = c("pearson")) # Note: corr_mat[[i]] is a matrix type.
+dist_mat <- lapply(corr_mat, function(x) sqrt(2 * (1 - x)))
+```
+
+```{r generate clusters and create adjacency matrix}
+library("VisualStock")
+trial_dist <- dist_mat[[66]] # Choose stocks within a period!
+cluster_output<-stock_cluster(trial_dist)
+```
+
+```{r generate parameters for plotting}
+gic_sec <- seq(10, 60, by = 5)# 11 sectors
+gic_name <- c("Energy", "Materials", "Industrials", "Consumer Discretionary", "Consumer Staples", "Health Care", "Financials", "Information Technology", "Communication Service", "Utilities", "Real Estate")
+l <- cluster_output$num_vertices # find total number of vertices of the adjacency matrix
+
+Mode_Max <- function(x) {
+  ux <- unique(x)
+  sec_no <- ux[which.max(tabulate(match(x, ux)))]
+  output <- as.integer(sec_no/5 -1) # This line is model-related, must convert the group info to a group of number within 1,2,3,...N (to match the color number provided by d3.js).
+} # find the first most frequently appearing term in (vector) x
+Mode_All <- function(x){
+  counts <- as.data.frame(table(x))
+  colnames(counts) <- c("sec", "freq")
+  counts <- merge(data.frame(sec = gic_sec), counts, all.x = TRUE) # note: be careful, takes global value
+  counts[is.na(counts)] <- 0
+  output <- as.integer(counts[, 2])  
+} # count the frequency of sectors in each vertex
+
+vertex.group <- as.integer(rep(0, l)) # most frequently appearing sector number in each vertex
+vertex.size <- as.integer(rep(0, l)) # number of points in each vertex
+vertex.comp <- list() # count number of different sectors in each vertex
+
+for (i in 1:l){
+   points.in.vertex <- cluster_output$points_in_vertex[[i]]
+   sectors.in.vertex <- as.integer(stock_prc[[66]][2, points.in.vertex + 1])
+   vertex.group[i] <- Mode_Max(sectors.in.vertex)
+   vertex.size[i] <- length(points.in.vertex)
+   vertex.comp[[i]] <- Mode_All(sectors.in.vertex)
+}
+```
+
+```{r igraph 2D pie chart plot, echo = FALSE}
+library(igraph)
+stock.graph <- graph_from_adjacency_matrix(cluster_output$adjacency, mode="undirected", weighted=TRUE, diag=FALSE)
+plot(stock.graph, layout = layout_in_circle, edge.width = E(stock.graph)$weight, main = my_files[66], margin = 0)
+
+attach(mtcars)
+layout(matrix(c(1, 1, 2, 2), 1, 4, byrow = TRUE))
+plot(stock.graph, layout = layout_in_circle, vertex.shape = "pie", vertex.pie = vertex.comp, vertex.pie.color = list(rainbow(11)), vertex.size = 10*vertex.size^0.2, main = my_files[66], margin = 0)
+pie(rep(1,11), labels = paste0(gic_sec, "  ", gic_name), clockwise = TRUE, col = rainbow(11),  radius = 0.5, cex = 0.9, main = 'Graph Legend')
+
+```
+
+```{r generate json file for 3D interactive plot}
+library("VisualStock")
+net <- igraph_to_net(stock.graph, group = vertex.group, size = vertex.size^0.2, comp = vertex.comp) # normalize the radius of the node so that the last one is not too big.
+net_to_json(net, "/Users/Alesa/Downloads/pied3/trial.json")
+```
